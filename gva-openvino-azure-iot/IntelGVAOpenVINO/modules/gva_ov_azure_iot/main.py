@@ -45,22 +45,20 @@ class OVDLStreamer():
         self.print_detections = True
         self.index = 1
 
-    def create_launch_string(self, publish_args, sink_no):
-
-        publish_args = shlex.quote(json.dumps(publish_args))
+    def create_launch_string(self, sink_no):
 
         if(self.type == "file"):
            return "filesrc location={} ! decodebin ! \
                gvadetect model={} model_proc={} device=CPU batch-size=1 ! queue ! \
-               gvawatermark ! gvametaconvert ! gvafpscounter ! gvapython module=./rtsp/publisher class=Publisher args={} ! \
-                fakesink name=sink{} sync=false ".format(self.source[sink_no], self.det_model, self.label_file, publish_args, sink_no+1)
+               gvawatermark ! gvametaconvert ! gvafpscounter ! gvapython name=publisher{} ! \
+                fakesink name=sink{} sync=false ".format(self.source[sink_no], self.det_model, self.label_file, sink_no+1,sink_no+1)
 
         if(self.type == "rtsp"):
             return "rtspsrc udp-buffer-size=212992 name=source location={} ! queue ! rtph264depay ! \
                     h264parse ! video/x-h264 ! queue ! avdec_h264 ! videoconvert name=\"videoconvert\" ! \
                     video/x-raw,format=BGRA ! queue leaky=upstream !  gvadetect model={} model_proc={} device=CPU batch-size=1 ! \
-                    queue ! gvawatermark ! gvametaconvert method=detection ! gvapython module=./rtsp/publisher class=Publisher args={} ! \
-                     fakesink name=sink{} ".format(self.source[sink_no], self.det_model, self.label_file, publish_args, sink_no+1)
+                    queue ! gvawatermark ! gvametaconvert method=detection ! gvapython name=publisher{} ! \
+                     fakesink name=sink{} ".format(self.source[sink_no], self.det_model, self.label_file,sink_no+1,sink_no+1)
 
     def gobject_mainloop(self):
        mainloop = GObject.MainLoop()
@@ -107,6 +105,8 @@ class OVDLStreamer():
         bus.add_signal_watch()
         bus.connect("message", self.bus_call, pipeline)
 
+
+
 if __name__ == '__main__':
 
     dlstr = OVDLStreamer("file", None, 1, None, None, None)
@@ -120,13 +120,21 @@ if __name__ == '__main__':
     idx = dlstr.streams
 
     while(idx):
-        gst_launch_string += dlstr.create_launch_string({"source":dlstr.source[idx - 1], "index":idx,
-                                                        "output_frames":dlstr.enable_rtsp,
-                                                        "print_detections":dlstr.print_detections}, idx-1)
+        gst_launch_string += dlstr.create_launch_string(idx-1)
         idx -= 1
 
     print(gst_launch_string)
     pipeline = Gst.parse_launch(gst_launch_string)
+
+    for i in range(dlstr.streams):
+        publisher = pipeline.get_by_name("publisher{}".format(i+1))
+        args = json.dumps({"source":dlstr.source[i], "index":i,
+                "output_frames":dlstr.enable_rtsp,
+                "print_detections":dlstr.print_detections})
+
+        publisher.set_property("module","./rtsp/publisher")
+        publisher.set_property("class","Publisher")
+        publisher.set_property("args",args)
 
 
     pipe = dlstr.streams
